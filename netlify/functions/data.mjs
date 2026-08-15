@@ -1,76 +1,158 @@
 import { getStore } from "@netlify/blobs";
 
-export default async (req) => {
-  const store = getStore("moon-cake-data");
-  const key = "database.json";
+const store = getStore({
+  name: "banh-trung-thu-data",
+  consistency: "strong"
+});
 
-  if (req.method === "GET") {
-    const data = await store.get(key, { type: "json" });
+const KEY = "database";
 
-    if (data) {
-      return new Response(JSON.stringify(data), {
+const emptyDatabase = {
+  products: [],
+  orders: []
+};
+
+async function readDatabase() {
+  const data = await store.get(KEY, { type: "json" });
+  return data || emptyDatabase;
+}
+
+async function saveDatabase(database) {
+  await store.setJSON(KEY, database);
+  return database;
+}
+
+export default async (request) => {
+  try {
+    // Lấy toàn bộ dữ liệu
+    if (request.method === "GET") {
+      const database = await readDatabase();
+
+      return new Response(JSON.stringify(database), {
+        status: 200,
         headers: {
-          "content-type": "application/json"
+          "Content-Type": "application/json; charset=utf-8"
         }
       });
     }
 
-    const initial = {
-      products: [
+    // Chỉ cho phép POST để thay đổi dữ liệu
+    if (request.method !== "POST") {
+      return new Response(
+        JSON.stringify({ error: "Method Not Allowed" }),
         {
-          id: 1,
-          name: "Bánh thập cẩm trứng muối",
-          filling: "Thập cẩm",
-          weight: "200g",
-          price: 120000,
-          stock: 30
-        },
-        {
-          id: 2,
-          name: "Bánh đậu xanh",
-          filling: "Đậu xanh",
-          weight: "200g",
-          price: 90000,
-          stock: 25
-        },
-        {
-          id: 3,
-          name: "Bánh sen trứng muối",
-          filling: "Hạt sen",
-          weight: "200g",
-          price: 110000,
-          stock: 20
+          status: 405,
+          headers: {
+            "Content-Type": "application/json"
+          }
         }
-      ],
-      customers: [],
-      orders: []
-    };
+      );
+    }
 
-    await store.setJSON(key, initial);
+    const body = await request.json();
+    const database = await readDatabase();
 
-    return new Response(JSON.stringify(initial), {
-      headers: {
-        "content-type": "application/json"
+    // =========================
+    // THÊM / SỬA SẢN PHẨM
+    // =========================
+    if (body.kind === "product") {
+      const product = body.data;
+
+      const index = database.products.findIndex(
+        item => item.id === product.id
+      );
+
+      if (index >= 0) {
+        database.products[index] = product;
+      } else {
+        database.products.push(product);
       }
-    });
-  }
+    }
 
-  if (req.method === "POST") {
-    const body = await req.json();
+    // =========================
+    // THÊM ĐƠN HÀNG
+    // =========================
+    else if (body.kind === "order") {
+      database.orders.push(body.data);
+    }
 
-    await store.setJSON(key, body);
+    // =========================
+    // GIAO / HOÀN TÁC ĐƠN
+    // =========================
+    else if (body.kind === "toggleOrder") {
+      const order = database.orders.find(
+        item => item.id === body.data.id
+      );
+
+      if (order) {
+        order.status =
+          order.status === "done"
+            ? "pending"
+            : "done";
+      }
+    }
+
+    // =========================
+    // XÓA SẢN PHẨM
+    // =========================
+    else if (body.kind === "deleteProduct") {
+      database.products =
+        database.products.filter(
+          item => item.id !== body.data.id
+        );
+    }
+
+    // =========================
+    // XÓA ĐƠN HÀNG
+    // =========================
+    else if (body.kind === "deleteOrder") {
+      database.orders =
+        database.orders.filter(
+          item => item.id !== body.data.id
+        );
+    }
+
+    else {
+      return new Response(
+        JSON.stringify({
+          error: "Unknown action"
+        }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    const updatedDatabase =
+      await saveDatabase(database);
 
     return new Response(
-      JSON.stringify({ ok: true }),
+      JSON.stringify(updatedDatabase),
       {
+        status: 200,
         headers: {
-          "content-type": "application/json"
+          "Content-Type": "application/json; charset=utf-8"
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    return new Response(
+      JSON.stringify({
+        error: "Server error",
+        message: error.message
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8"
         }
       }
     );
   }
-
-  return new Response("Method Not Allowed", {
-    status: 405
-  });
 };
